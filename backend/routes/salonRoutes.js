@@ -44,6 +44,7 @@ router.get('/owner/:ownerId', async (req, res) => {
     res.status(500).json({ message: 'Eroare server.' });
   }
 });
+
 // Returnează toate saloanele sau doar cele dintr-un sector anume
 router.get('/', async (req, res) => {
   const { sector } = req.query;
@@ -61,6 +62,71 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Search endpoint - Important: must be placed BEFORE /:id route to prevent conflict
+router.get("/search", async (req, res) => {
+  try {
+    const { service, sector, date, time } = req.query;
+    console.log("Search query:", req.query);
+    
+    const query = {};
+
+    // Service filter - case insensitive search
+    if (service) {
+      query.services = { $regex: new RegExp(service, 'i') };
+    }
+
+    // Sector filter
+    if (sector) {
+      query["address.sector"] = sector;
+    }
+
+    // Day of week and time filter
+    if (date && time) {
+      try {
+        const searchDate = new Date(date);
+        if (isNaN(searchDate.getTime())) {
+          throw new Error("Invalid date format");
+        }
+        
+        // Convert day index to Romanian day name
+        const days = [
+          "Duminică",
+          "Luni",
+          "Marți",
+          "Miercuri",
+          "Joi",
+          "Vineri",
+          "Sâmbătă",
+        ];
+        const dayOfWeek = days[searchDate.getDay()];
+        console.log("Searching for day:", dayOfWeek);
+
+        // Query for salons with working hours on the selected day and time
+        query.workingHours = {
+          $elemMatch: {
+            dayOfWeek: dayOfWeek,
+            from: { $lte: time }, // open at or before the requested time
+            to: { $gte: time }    // closes at or after the requested time
+          }
+        };
+      } catch (err) {
+        console.error("Date parsing error:", err);
+        return res.status(400).json({ message: "Format de dată invalid" });
+      }
+    }
+
+    console.log("Final query:", JSON.stringify(query));
+    
+    // Execute the query
+    const salons = await Salon.find(query);
+    console.log(`Found ${salons.length} salons`);
+    
+    res.json(salons);
+  } catch (err) {
+    console.error("Eroare la căutare saloane:", err);
+    res.status(500).json({ message: "Eroare server la search." });
+  }
+});
 
 // Editează un salon existent
 router.put('/:id', async (req, res) => {
@@ -77,47 +143,19 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-router.get("/search", async (req, res) => {
+// Returnează un salon specific după ID - Must be placed AFTER more specific routes
+router.get('/:id', async (req, res) => {
   try {
-    const { service, sector, date, time } = req.query;
-    const query = {};
-    console.log(req.query)
-
-    if (service) {
-      query.services = service;
+    const salon = await Salon.findById(req.params.id);
+    
+    if (!salon) {
+      return res.status(404).json({ message: 'Salonul nu a fost găsit.' });
     }
-
-    if (sector) {
-      query["address.sector"] = sector;
-    }
-
-    if (date && time) {
-      const days = [
-        "Duminică",
-        "Luni",
-        "Marți",
-        "Miercuri",
-        "Joi",
-        "Vineri",
-        "Sâmbătă",
-      ];
-      const dayOfWeek = days[new Date(date).getDay()];
-
-      query.workingHours = {
-        $elemMatch: {
-          dayOfWeek,
-          from: { $lte: time }, 
-          to:   { $gte: time }  
-        },
-      };
-    }
-
-    const salons = await Salon.find(query);
-
-    res.json(salons);
-  } catch (err) {
-    console.error("Eroare la căutare saloane:", err);
-    res.status(500).json({ message: "Eroare server la search." });
+    
+    res.json(salon);
+  } catch (error) {
+    console.error('Eroare la obținerea salonului după ID:', error);
+    res.status(500).json({ message: 'Eroare server.' });
   }
 });
 
